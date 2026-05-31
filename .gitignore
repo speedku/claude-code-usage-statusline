@@ -1,0 +1,7 @@
+# Local / runtime artifacts — never commit these
+*.log
+*.bak
+*.bak-*
+.credentials.json
+claude-usage-cache.json
+node_modules/
