@@ -24,13 +24,14 @@ function fmtTime(m) {
   if (h > 0) return mn > 0 ? `${h}h ${mn}m` : `${h}h`;
   return `${mn}m`;
 }
-// Compact duration from milliseconds: "34s" / "5m" / "1h 2m"
-function fmtDur(ms) {
+// Session cook time as "45s" / "12m 2s" / "1h 5m 3s" (matches Claude Code's "Cooked for …")
+function fmtCooked(ms) {
   if (typeof ms !== 'number' || ms <= 0) return null;
   const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60), h = Math.floor(m / 60);
-  return h > 0 ? `${h}h ${m % 60}m` : `${m}m`;
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  if (h > 0) return `${h}h ${m}m ${sec}s`;
+  if (m > 0) return `${m}m ${sec}s`;
+  return `${sec}s`;
 }
 function bar(pct, w) {
   const f = Math.round(Math.min(100, Math.max(0, pct)) / 100 * w);
@@ -149,9 +150,11 @@ process.stdin.on('end', () => {
     const pct = Math.round(d.context_window?.used_percentage || 0);
     const ctxClr = pct >= 80 ? RED : pct >= 50 ? YELLOW : GREEN;
 
-    // Effort level: prefer a live field from stdin if Claude Code ever provides
-    // one, otherwise fall back to the configured value in settings.json.
-    const effort = d.effortLevel || d.effort || d.model?.effort || readEffort();
+    // Effort level: Claude Code sends it as {level: "..."} (2.1.x); older paths
+    // may send a bare string. Fall back to the configured value in settings.json.
+    const effRaw = d.effort;
+    const effort = (effRaw && typeof effRaw === 'object' ? effRaw.level : effRaw)
+      || d.effortLevel || d.model?.effort || readEffort();
     const effClr = effort === 'xhigh' ? RED : effort === 'high' ? ORANGE : effort === 'medium' ? YELLOW : effort === 'low' ? GREEN : DIM;
     const effTag = effort ? ` ${effClr}⚡${effort}${RESET}` : '';
 
@@ -190,9 +193,9 @@ process.stdin.on('end', () => {
     const git = gitInfo(cwd);
     if (git) line += ` ${MAGENTA}⎇ ${git.branch}${RESET}${git.dirty ? ` ${YELLOW}*${RESET}` : ''}`;
 
-    // Session working time so far (only if Claude Code provides cost data).
-    const dur = fmtDur(d.cost?.total_duration_ms);
-    if (dur) line += ` ${DIM}⏱ ${dur}${RESET}`;
+    // Session cook time so far (Claude Code's "Cooked for …"), if cost data present.
+    const cooked = fmtCooked(d.cost?.total_duration_ms);
+    if (cooked) line += ` ${DIM}✳ Cooked for ${cooked}${RESET}`;
 
     console.log(line);
 
