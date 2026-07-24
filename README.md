@@ -1,15 +1,18 @@
 # Claude Code — Usage Statusline
 
-A fast, CloudPilot-style status line for [Claude Code](https://claude.com/claude-code) that shows your model, context window usage, and your **5-hour** and **7-day** rate-limit utilization — with reset countdowns and color-coded warnings.
+A fast, CloudPilot-style status line for [Claude Code](https://claude.com/claude-code) that shows your model, context window usage, your **5-hour** and **7-day** rate-limit utilization (with reset countdowns and color-coded warnings), plus the working directory, git branch and session time.
 
 ```
-Opus 4 ⚡xhigh | ████░░ 32% | 5h: 3% ↻ 3h | 7d: 13% ↻ 4d
+Opus 4 ⚡xhigh | ████░░ 32% | 5h: 3% ↻ 3h | 7d: 13% ↻ 4d | ~/code/app ⎇ main * ⏱ 12m
 ```
 
 - **Model** + configured effort level (`⚡xhigh`/`high`/`medium`/`low`)
 - **Context window** used (bar + %), green → yellow → red as it fills
 - **5h** and **7d** usage utilization with `↻` countdown to reset
 - Colors warn when you're burning quota faster than time elapsed
+- **Working directory** (cyan) so you always know where the session is rooted
+- **Git branch** (`⎇`) with a `*` when there are uncommitted tracked changes
+- **Session time** (`⏱`) elapsed so far, when Claude Code reports it
 
 ## How it works
 
@@ -78,6 +81,8 @@ Cache lives at `<tmp>/claude-usage-cache.json`; refresh debug log at `<tmp>/clau
 
 - The status line re-reads `effortLevel` from `settings.json` on each render, so it tracks your effort changes live.
 - Usage data comes from Claude Code's own OAuth usage endpoint — same numbers Claude Code uses internally.
+- The git **branch** is read straight from `.git/HEAD` (instant, no subprocess). The `*` dirty marker runs `git status --porcelain -uno` (tracked files only) with a hard 800 ms timeout, so even a huge repo can never stall a render — if it times out or git is missing, the branch still shows without the marker.
+- **Session time** is taken from `cost.total_duration_ms` in the status line payload; it only appears on Claude Code versions that provide it.
 - Inspired by the "CloudPilot" status line style.
 
 ## License
