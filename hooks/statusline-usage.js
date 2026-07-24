@@ -100,6 +100,61 @@ function gitInfo(startDir) {
   } catch { return null; }
 }
 
+// Last genuine user prompt from the session transcript (JSONL), shown on a
+// second status row so you can see at a glance what the session was asked to
+// do. Skips tool-result turns, meta/sidechain entries, and strips image
+// markers, system-reminders and any XML-ish wrappers so only the user's words
+// remain. Reads only the tail of very large transcripts to stay fast.
+function lastUserPrompt(transcriptPath) {
+  if (!transcriptPath) return null;
+  let text;
+  try {
+    const stat = fs.statSync(transcriptPath);
+    const TAIL = 2 * 1024 * 1024; // 2 MB is plenty to hold the latest user turn
+    if (stat.size > 8 * 1024 * 1024) {
+      const fd = fs.openSync(transcriptPath, 'r');
+      const buf = Buffer.alloc(TAIL);
+      const n = fs.readSync(fd, buf, 0, TAIL, stat.size - TAIL);
+      fs.closeSync(fd);
+      text = buf.toString('utf8', 0, n);
+    } else {
+      text = fs.readFileSync(transcriptPath, 'utf8');
+    }
+  } catch { return null; }
+
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const ln = lines[i].trim();
+    if (!ln || ln[0] !== '{') continue;
+    let o;
+    try { o = JSON.parse(ln); } catch { continue; }
+    if (o.type !== 'user' || o.isMeta || o.isSidechain) continue;
+
+    const c = o.message?.content;
+    let s = '';
+    if (typeof c === 'string') s = c;
+    else if (Array.isArray(c)) {
+      // A user turn with no text block is a tool_result carrier, not a prompt.
+      const parts = c.filter(p => p && p.type === 'text' && typeof p.text === 'string');
+      if (!parts.length) continue;
+      s = parts.map(p => p.text).join(' ');
+    } else continue;
+
+    s = s
+      .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, ' ')
+      .replace(/\[Image #\d+\]/g, ' ')
+      .replace(/\[Image: source:[^\]]*\]/g, ' ')
+      .replace(/<[^>]+>/g, ' ')   // drop remaining tags, keep their inner text
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!s) continue;
+
+    const MAX = 120;
+    return s.length > MAX ? s.slice(0, MAX - 1).trimEnd() + '…' : s;
+  }
+  return null;
+}
+
 // Read cache synchronously - NEVER blocks
 function readCache() {
   try {
@@ -185,6 +240,10 @@ process.stdin.on('end', () => {
     if (git) line += ` ${MAGENTA}⎇ ${git.branch}${RESET}${git.dirty ? ` ${YELLOW}*${RESET}` : ''}`;
 
     console.log(line);
+
+    // Second row: the last thing this session was asked to do.
+    const prompt = lastUserPrompt(d.transcript_path);
+    if (prompt) console.log(`${DIM}↳ ${prompt}${RESET}`);
 
     // If cache is stale, refresh in background for next run
     if (stale) refreshCacheInBackground();

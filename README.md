@@ -1,9 +1,10 @@
 # Claude Code — Usage Statusline
 
-A fast, CloudPilot-style status line for [Claude Code](https://claude.com/claude-code) that shows your model, context window usage, your **5-hour** and **7-day** rate-limit utilization (with reset countdowns and color-coded warnings), plus the working directory and git branch.
+A fast, CloudPilot-style status line for [Claude Code](https://claude.com/claude-code) that shows your model, context window usage, your **5-hour** and **7-day** rate-limit utilization (with reset countdowns and color-coded warnings), the working directory and git branch, plus a second row with the **last prompt** of the session.
 
 ```
 Opus 4 ⚡xhigh | ████░░ 32% | 5h: 3% ↻ 3h | 7d: 13% ↻ 4d | ~/code/app ⎇ main *
+↳ refactor the auth middleware to use the new token cache
 ```
 
 - **Model** + effort level (`⚡xhigh`/`high`/`medium`/`low`)
@@ -12,6 +13,7 @@ Opus 4 ⚡xhigh | ████░░ 32% | 5h: 3% ↻ 3h | 7d: 13% ↻ 4d | ~/co
 - Colors warn when you're burning quota faster than time elapsed
 - **Working directory** (cyan) so you always know where the session is rooted
 - **Git branch** (`⎇`) with a `*` when there are uncommitted tracked changes
+- **Last prompt** (`↳`, second row) — the most recent thing you asked the session to do, so you can tell at a glance what a window is working on
 
 ## How it works
 
@@ -81,6 +83,7 @@ Cache lives at `<tmp>/claude-usage-cache.json`; refresh debug log at `<tmp>/clau
 - The effort level comes from the payload's `effort.level` when present, falling back to `effortLevel` in `settings.json` (re-read each render, so it tracks changes live).
 - Usage data comes from Claude Code's own OAuth usage endpoint — same numbers Claude Code uses internally.
 - The git **branch** is read straight from `.git/HEAD` (instant, no subprocess). The `*` dirty marker runs `git status --porcelain -uno` (tracked files only) with a hard 800 ms timeout, so even a huge repo can never stall a render — if it times out or git is missing, the branch still shows without the marker.
+- The **last prompt** row reads `transcript_path` from the status line payload and scans the transcript JSONL from the end for the most recent genuine user turn. It skips tool-result turns and meta/sidechain entries, strips image markers, `<system-reminder>` blocks and any XML-ish wrappers, then truncates to 120 chars. Very large transcripts are read tail-only (last 2 MB) so the render stays fast. The row is omitted entirely when there's no prompt yet.
 - Inspired by the "CloudPilot" status line style.
 
 ## License
