@@ -24,15 +24,6 @@ function fmtTime(m) {
   if (h > 0) return mn > 0 ? `${h}h ${mn}m` : `${h}h`;
   return `${mn}m`;
 }
-// Session cook time as "45s" / "12m 2s" / "1h 5m 3s" (matches Claude Code's "Cooked for …")
-function fmtCooked(ms) {
-  if (typeof ms !== 'number' || ms <= 0) return null;
-  const s = Math.floor(ms / 1000);
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
-  if (h > 0) return `${h}h ${m}m ${sec}s`;
-  if (m > 0) return `${m}m ${sec}s`;
-  return `${sec}s`;
-}
 function bar(pct, w) {
   const f = Math.round(Math.min(100, Math.max(0, pct)) / 100 * w);
   return '█'.repeat(f) + '░'.repeat(w - f);
@@ -192,10 +183,6 @@ process.stdin.on('end', () => {
     if (cwd) line += ` | ${CYAN}${cwd}${RESET}`;
     const git = gitInfo(cwd);
     if (git) line += ` ${MAGENTA}⎇ ${git.branch}${RESET}${git.dirty ? ` ${YELLOW}*${RESET}` : ''}`;
-
-    // Session cook time so far (Claude Code's "Cooked for …"), if cost data present.
-    const cooked = fmtCooked(d.cost?.total_duration_ms);
-    if (cooked) line += ` ${DIM}✳ Cooked for ${cooked}${RESET}`;
 
     console.log(line);
 
