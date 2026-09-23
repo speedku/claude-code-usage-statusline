@@ -12,7 +12,7 @@ Pliki narzędzi pobierasz z tego repozytorium, np. w PowerShell:
 
 ```powershell
 $base = "https://raw.githubusercontent.com/speedku/claude-code-usage-statusline/master"
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.claude\hooks", "$env:USERPROFILE\.localin" | Out-Null
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.claude\hooks", "$env:USERPROFILE\.local\bin" | Out-Null
 Invoke-WebRequest "$base/hooks/statusline-usage.js" -OutFile "$env:USERPROFILE\.claude\hooks\statusline-usage.js"
 ```
 
