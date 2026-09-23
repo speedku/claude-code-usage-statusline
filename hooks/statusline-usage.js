@@ -242,6 +242,12 @@ process.stdin.on('end', () => {
       line += ` ${DIM}| run: claude logout && claude login${RESET}`;
     }
 
+    // Logged-in account (switching accounts rewrites ~/.claude.json)
+    try {
+      const acc = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8')).oauthAccount;
+      if (acc && acc.emailAddress) line += ` | ${DIM}👤${RESET} ${acc.emailAddress}`;
+    } catch {}
+
     // Working directory + git branch/dirty state (the "where we're working" part)
     const cwd = d.workspace?.current_dir || d.cwd;
     if (cwd) line += ` | ${CYAN}${cwd}${RESET}`;
