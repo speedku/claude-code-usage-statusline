@@ -5,8 +5,16 @@ naprzemiennie. Wykonaj kroki po kolei, na tym komputerze, i rozmawiaj z użytkow
 prostym językiem. Na końcu użytkownik ma: pasek statusu z limitami wszystkich kont, komendę
 `claude-best`, która uruchamia Claude na koncie z największym zapasem, i zalogowane konta.
 
-System: Windows. Pliki narzędzi bierzesz z tego repozytorium:
-`https://raw.githubusercontent.com/speedku/claude-code-usage-statusline/master/<ścieżka>`.
+System: Windows. **Kroki 1-4 i 6 wykonujesz sam**, swoimi narzędziami (PowerShell/Bash, Write);
+użytkownik w tym czasie nic nie wpisuje. Jego jedyna praca to logowanie kont w kroku 5.
+
+Pliki narzędzi pobierasz z tego repozytorium, np. w PowerShell:
+
+```powershell
+$base = "https://raw.githubusercontent.com/speedku/claude-code-usage-statusline/master"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.claude\hooks", "$env:USERPROFILE\.localin" | Out-Null
+Invoke-WebRequest "$base/hooks/statusline-usage.js" -OutFile "$env:USERPROFILE\.claude\hooks\statusline-usage.js"
+```
 
 ## Zasada, którą przekazujesz użytkownikowi na starcie i na końcu
 
@@ -21,7 +29,11 @@ Sprawdź, co już jest: `node --version`, `uv --version`, `cswap --version`, czy
 `~/.claude/hooks/statusline-usage.js` i `~/.local/bin/claude-best.cmd`, i co stoi w kluczu
 `statusLine` w `~/.claude/settings.json`.
 
-Gotowe, gdy znasz listę brakujących elementów. Istniejące i aktualne pomijasz w dalszych krokach.
+Brak Node.js (pasek statusu to skrypt Node): zainstaluj `winget install OpenJS.NodeJS.LTS`
+i sprawdź w nowym oknie `node --version`.
+
+Gotowe, gdy znasz listę brakujących elementów i Node.js działa. Istniejące i aktualne elementy
+pomijasz w dalszych krokach.
 
 ## Krok 2. uv i claude-swap
 
