@@ -207,7 +207,16 @@ process.stdin.on('end', () => {
     let line = `${BOLD}${model}${RESET}${effTag} | ${ctxClr}${bar(pct, 6)} ${pct}%${RESET}`;
 
     // Read cached usage data (instant, no HTTP)
-    const { data: usage, stale, age } = readCache();
+    // Prefer live rate_limits from the payload: always the currently logged-in
+    // account, so switching accounts shows correct numbers immediately.
+    let { data: usage, stale, age } = readCache();
+    const rl = d.rate_limits;
+    if (rl && (rl.five_hour || rl.seven_day)) {
+      const conv = w => w && w.used_percentage != null
+        ? { utilization: w.used_percentage, resets_at: new Date(w.resets_at * 1000).toISOString() } : null;
+      usage = { five_hour: conv(rl.five_hour), seven_day: conv(rl.seven_day) };
+      stale = false; age = 0;
+    }
 
     if (usage && !usage.error) {
       const isVeryStale = age > 3600; // >1 hour old
