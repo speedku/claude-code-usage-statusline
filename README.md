@@ -1,5 +1,8 @@
 # Claude Code — Usage Statusline
 
+> **Instalacja przez Claude Code (Windows, kilka kont):** wklej Claude polecenie
+> `Przeczytaj https://raw.githubusercontent.com/speedku/claude-code-usage-statusline/master/SETUP-CLAUDE.md i wykonaj instrukcję krok po kroku na tym komputerze.`
+
 A fast, CloudPilot-style status line for [Claude Code](https://claude.com/claude-code) that shows your model, context window usage, your **5-hour** and **7-day** rate-limit utilization (with reset countdowns and color-coded warnings), the working directory and git branch, plus a second row with the **last prompt** of the session.
 
 ```
@@ -126,7 +129,7 @@ With two or more accounts registered, the status line gets an extra row:
 
 | You see | Fix |
 |---------|-----|
-| `| run: claude logout && claude login` | No usage cache yet / not authenticated. Log in, wait one refresh cycle. |
+| `| limity po pierwszej odpowiedzi` | No usage data yet: 5h/7d arrive with the first API response of the session. Send one message and wait for the next render. |
 | `(stale …)` marker | Background refresh hasn't succeeded recently. Check `claude-statusline-refresh.log` in your temp dir. |
 | Only model + context, no 5h/7d | Cache empty on first run — give it a few seconds, render again. |
 

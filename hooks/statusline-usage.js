@@ -348,8 +348,9 @@ process.stdin.on('end', () => {
         line += ` ${DIM}(stale ${fmtTime(Math.floor(age / 60))})${RESET}`;
       }
     } else {
-      // No cache at all - show hint
-      line += ` ${DIM}| run: claude logout && claude login${RESET}`;
+      // No usage data yet: rate_limits arrive with the first API response of the session.
+      // Never suggest logout/login here: with rotated accounts it invalidates the stored login.
+      line += ` ${DIM}| limity po pierwszej odpowiedzi${RESET}`;
     }
 
     // Logged-in account (switching accounts rewrites ~/.claude.json). A session
