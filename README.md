@@ -65,26 +65,56 @@ The refresh script reads your **local** Claude Code OAuth token from `~/.claude/
 
 ## Multiple accounts (optional, via claude-swap)
 
-If you rotate several Claude subscriptions, install [claude-swap](https://github.com/realiti4/claude-swap) and register each account once:
+If you rotate several Claude subscriptions, this repo works together with [claude-swap](https://github.com/realiti4/claude-swap) (`cswap`): the status line shows every account's limits, and two small Windows tools in `tools/` start Claude on the right account and add accounts safely.
+
+### The one rule: never `/login` or `/logout` in your normal Claude window
+
+`/login` re-logs the whole profile and invalidates the account you are leaving, so the copy claude-swap keeps of it dies ("re-login needed"). `/logout` revokes the token outright. Measured the hard way: two of four accounts died while adding them one after another with `/login`. Each account needs its own profile, chosen when a session starts, never switched inside it.
+
+### Setup
 
 ```bash
 uv tool install claude-swap     # or: pipx install claude-swap
-# log in to account A in Claude Code (/login), then:
-cswap add
-# /login to account B, then again:
-cswap add
 ```
+
+Copy `tools/claude-best.ps1`, `tools/claude-best.cmd` and `tools/claude-add-account.cmd` to a folder on your PATH (e.g. `~/.local/bin`, where uv puts `cswap`).
+
+Register each account **in a separate terminal** with the next free slot number:
+
+```bat
+claude-add-account.cmd 1
+claude-add-account.cmd 2
+```
+
+It opens Claude in an empty temporary profile (`CLAUDE_CONFIG_DIR`), you log in there and type `/exit`, then it runs `cswap add --slot N` and deletes the temporary folder. Nothing else gets logged out. Use the same command to repair an account that shows "re-login needed".
+
+### Daily use
+
+| Command | What it does |
+|---|---|
+| `claude-best` | Starts Claude on the account with the most headroom, in this terminal only (`cswap run N`). Other terminals keep their accounts. |
+| `claude-best -n` | Only prints the account table and the choice. |
+| `claude-best --resume` | Extra arguments are passed on to `claude`. |
+| `claude-best --model fable` | Also skips accounts whose limit for that model is used up. |
+| `cswap run 2` | Claude on a specific account, in this terminal only. |
+| `cswap list` | All accounts with 5h / 7d / per-model limits. |
+
+To change account, `/exit` and start again with `claude-best` or `cswap run N`. `cswap switch N` also works, but it changes the account for every open terminal at once.
+
+**How `claude-best` picks:** remaining weekly (7d) percentage divided by hours until that weekly reset. The account whose quota would go to waste soonest wins. Skipped: 5h window at 90%+, 7d at 98%+, accounts needing re-login, and (with `--model X`) accounts with that model's cap at 98%+.
+
+### The status line row
 
 With two or more accounts registered, the status line gets an extra row:
 
 ```
-⇄ ● Temu 5h 14% 7d 89% Fable 100% · ○ k.ponikiewski 5h 40% 7d 55% · ○ hurt 5h 95% 7d 20% · ○ empik 5h 0% 7d 70% → cswap switch 4
+⇄ ● work 5h 14% 7d 89% Fable 100% · ○ personal 5h 40% 7d 55% · ○ team 5h 95% 7d 20% · ○ spare 5h 0% 7d 70% → cswap switch 4
 ```
 
-- `●` is the logged-in account (its numbers come live from the payload), `○` the others (from cswap's cache in `~/.claude-swap-backup/cache/usage.json`).
+- `●` is the account of this session (live numbers from the payload; sessions started with `cswap run` are recognised through `CLAUDE_CONFIG_DIR`), `○` the others (from cswap's cache in `~/.claude-swap-backup/cache/usage.json`).
 - A per-model weekly cap (e.g. `Fable 100%`) is shown when it reaches 80%.
-- `→ cswap switch N` suggests the account whose weekly quota would go to waste soonest: most headroom per hour left until its 7d reset, skipping accounts with the 5h window at 90%+ or blocked for the current model.
-- The status line never calls the usage API for other accounts itself. At most every 4 minutes it launches a detached `cswap list --json`, and cswap applies its own polling budget for `/api/oauth/usage`.
+- `→ cswap switch N` suggests an account using the same rule as `claude-best`.
+- The status line never calls the usage API for other accounts itself. At most every 4 minutes it launches a detached `cswap list --json`, and cswap keeps to the usage endpoint's budget (about 30 requests per hour per account).
 - `(dane …)` marks cswap data older than 30 minutes.
 
 ## Requirements
