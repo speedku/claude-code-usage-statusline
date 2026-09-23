@@ -335,10 +335,12 @@ process.stdin.on('end', () => {
       line += ` ${DIM}| run: claude logout && claude login${RESET}`;
     }
 
-    // Logged-in account (switching accounts rewrites ~/.claude.json)
+    // Logged-in account (switching accounts rewrites ~/.claude.json). A session
+    // started with CLAUDE_CONFIG_DIR (e.g. `cswap run N`) keeps its login there.
     let activeEmail = null;
     try {
-      const acc = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8')).oauthAccount;
+      const cfgBase = process.env.CLAUDE_CONFIG_DIR || os.homedir();
+      const acc = JSON.parse(fs.readFileSync(path.join(cfgBase, '.claude.json'), 'utf8')).oauthAccount;
       if (acc && acc.emailAddress) { activeEmail = acc.emailAddress; line += ` | ${DIM}👤${RESET} ${acc.emailAddress}`; }
     } catch {}
 
