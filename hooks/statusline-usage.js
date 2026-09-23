@@ -186,6 +186,99 @@ function refreshCacheInBackground() {
   child.unref();
 }
 
+// --- Account rotation row (claude-swap / cswap) ---
+// Every account registered with `cswap add`, with its 5h/7d usage, read from
+// cswap's own cache so the render never calls the API. cswap owns the polling
+// budget of /api/oauth/usage; we only nudge it with a detached `cswap list`.
+const CSWAP_DIR = process.env.STATUSLINE_CSWAP_DIR || path.join(os.homedir(), '.claude-swap-backup');
+const CSWAP_EXE = path.join(os.homedir(), '.local', 'bin', process.platform === 'win32' ? 'cswap.exe' : 'cswap');
+const CSWAP_STAMP = path.join(os.tmpdir(), 'claude-cswap-refresh.stamp');
+const CSWAP_REFRESH_S = 240; // cswap itself serves entries younger than 180 s from cache
+
+function pctClr(p) { return p >= 90 ? RED : p >= 70 ? YELLOW : GREEN; }
+
+// A window whose reset time already passed is empty, whatever the cache says.
+function windowPct(w) {
+  if (!w || w.pct == null) return null;
+  if (w.resets_at && new Date(w.resets_at).getTime() <= Date.now()) return 0;
+  return Math.round(w.pct);
+}
+
+function refreshCswapInBackground() {
+  try {
+    const last = parseInt(fs.readFileSync(CSWAP_STAMP, 'utf8'), 10);
+    if (Date.now() - last < CSWAP_REFRESH_S * 1000) return;
+  } catch {}
+  if (!fs.existsSync(CSWAP_EXE)) return;
+  try { fs.writeFileSync(CSWAP_STAMP, String(Date.now())); } catch {}
+  try {
+    const child = spawn(CSWAP_EXE, ['list', '--json'], { detached: true, stdio: 'ignore', windowsHide: true });
+    child.unref();
+  } catch {}
+}
+
+// Returns the row string, or null when fewer than two accounts are registered.
+function accountsRow(activeEmail, live, modelId) {
+  let seq, cache;
+  try { seq = JSON.parse(fs.readFileSync(path.join(CSWAP_DIR, 'sequence.json'), 'utf8')); } catch { return null; }
+  try { cache = JSON.parse(fs.readFileSync(path.join(CSWAP_DIR, 'cache', 'usage.json'), 'utf8')).accounts || {}; } catch { cache = {}; }
+  const nums = (seq.sequence || []).map(String).filter(n => seq.accounts && seq.accounts[n]);
+  if (nums.length < 2) return null;
+
+  const model = (modelId || '').toLowerCase();
+  const now = Date.now();
+  let oldest = 0;
+  const rows = nums.map(n => {
+    const email = seq.accounts[n].email || '?';
+    const active = !!activeEmail && email.toLowerCase() === activeEmail.toLowerCase();
+    const c = cache[n] || {};
+    const g = c.lastGood || {};
+    let h5 = windowPct(g.five_hour), d7 = windowPct(g.seven_day);
+    let d7Reset = g.seven_day && g.seven_day.resets_at;
+    // The live payload is fresher than any cache for the logged-in account.
+    if (active && live) {
+      if (live.h5 != null) h5 = live.h5;
+      if (live.d7 != null) { d7 = live.d7; d7Reset = live.d7Reset || d7Reset; }
+    }
+    // Per-model weekly cap (e.g. "Fable 100%") blocks the account for that model.
+    let scoped = null;
+    for (const s of g.scoped || []) {
+      const p = windowPct(s);
+      if (p != null && (!scoped || p > scoped.pct)) scoped = { name: s.name || '?', pct: p };
+    }
+    const scopedHits = scoped && model && model.includes(String(scoped.name).toLowerCase());
+    const eff7 = Math.max(d7 ?? 0, scopedHits ? scoped.pct : 0);
+    if (!active && c.fetchedAt) oldest = Math.max(oldest, now / 1000 - c.fetchedAt);
+    if (!active && !c.fetchedAt) oldest = Infinity;
+    return { n, email, active, h5, d7, eff7, d7Reset, scoped };
+  });
+
+  // Balancing: the account whose weekly quota would otherwise go to waste soonest
+  // wins, i.e. the most headroom per hour left until its 7d reset. An account
+  // with its 5h window nearly full is skipped (it would stall within minutes).
+  let best = null;
+  for (const r of rows) {
+    if (r.d7 == null || (r.h5 ?? 0) >= 90 || r.eff7 >= 98) continue;
+    const hrs = r.d7Reset ? Math.max(1, (new Date(r.d7Reset).getTime() - now) / 3600000) : 168;
+    const score = (100 - r.eff7) / hrs;
+    if (!best || score > best.score) best = { ...r, score };
+  }
+
+  const parts = rows.map(r => {
+    const name = r.email.split('@')[0];
+    const tag = r.active ? `${BOLD}● ${name}${RESET}` : `${DIM}○${RESET} ${name}`;
+    const v5 = r.h5 == null ? `${DIM}5h ?${RESET}` : `${pctClr(r.h5)}5h ${r.h5}%${RESET}`;
+    const v7 = r.d7 == null ? `${DIM}7d ?${RESET}` : `${pctClr(r.d7)}7d ${r.d7}%${RESET}`;
+    const sc = r.scoped && r.scoped.pct >= 80 ? ` ${pctClr(r.scoped.pct)}${r.scoped.name} ${r.scoped.pct}%${RESET}` : '';
+    return `${tag} ${v5} ${v7}${sc}`;
+  });
+
+  let row = `${DIM}⇄${RESET} ` + parts.join(` ${DIM}·${RESET} `);
+  if (best && !best.active) row += ` ${CYAN}→ cswap switch ${best.n}${RESET}`;
+  if (oldest > 1800) row += ` ${DIM}(dane ${oldest === Infinity ? 'brak' : fmtTime(Math.floor(oldest / 60))})${RESET}`;
+  return row;
+}
+
 // --- MAIN: Read stdin, output IMMEDIATELY, refresh in background if stale ---
 let input = '';
 process.stdin.on('data', chunk => input += chunk);
@@ -243,9 +336,10 @@ process.stdin.on('end', () => {
     }
 
     // Logged-in account (switching accounts rewrites ~/.claude.json)
+    let activeEmail = null;
     try {
       const acc = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8')).oauthAccount;
-      if (acc && acc.emailAddress) line += ` | ${DIM}👤${RESET} ${acc.emailAddress}`;
+      if (acc && acc.emailAddress) { activeEmail = acc.emailAddress; line += ` | ${DIM}👤${RESET} ${acc.emailAddress}`; }
     } catch {}
 
     // Working directory + git branch/dirty state (the "where we're working" part)
@@ -255,6 +349,17 @@ process.stdin.on('end', () => {
     if (git) line += ` ${MAGENTA}⎇ ${git.branch}${RESET}${git.dirty ? ` ${YELLOW}*${RESET}` : ''}`;
 
     console.log(line);
+
+    // Rotation row: all cswap accounts side by side.
+    try {
+      const live = rl ? {
+        h5: rl.five_hour?.used_percentage != null ? Math.round(rl.five_hour.used_percentage) : null,
+        d7: rl.seven_day?.used_percentage != null ? Math.round(rl.seven_day.used_percentage) : null,
+        d7Reset: rl.seven_day?.resets_at ? new Date(rl.seven_day.resets_at * 1000).toISOString() : null
+      } : null;
+      const accRow = accountsRow(activeEmail, live, d.model?.id);
+      if (accRow) { console.log(accRow); refreshCswapInBackground(); }
+    } catch {}
 
     // Second row: the last thing this session was asked to do.
     const prompt = lastUserPrompt(d.transcript_path);

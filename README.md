@@ -63,6 +63,30 @@ The refresh script reads your **local** Claude Code OAuth token from `~/.claude/
 
 3. Make sure you're logged in (`claude` → it uses your existing session). Restart Claude Code. The first render shows the model + context immediately; usage numbers appear a couple seconds later once the background refresh populates the cache.
 
+## Multiple accounts (optional, via claude-swap)
+
+If you rotate several Claude subscriptions, install [claude-swap](https://github.com/realiti4/claude-swap) and register each account once:
+
+```bash
+uv tool install claude-swap     # or: pipx install claude-swap
+# log in to account A in Claude Code (/login), then:
+cswap add
+# /login to account B, then again:
+cswap add
+```
+
+With two or more accounts registered, the status line gets an extra row:
+
+```
+⇄ ● Temu 5h 14% 7d 89% Fable 100% · ○ k.ponikiewski 5h 40% 7d 55% · ○ hurt 5h 95% 7d 20% · ○ empik 5h 0% 7d 70% → cswap switch 4
+```
+
+- `●` is the logged-in account (its numbers come live from the payload), `○` the others (from cswap's cache in `~/.claude-swap-backup/cache/usage.json`).
+- A per-model weekly cap (e.g. `Fable 100%`) is shown when it reaches 80%.
+- `→ cswap switch N` suggests the account whose weekly quota would go to waste soonest: most headroom per hour left until its 7d reset, skipping accounts with the 5h window at 90%+ or blocked for the current model.
+- The status line never calls the usage API for other accounts itself. At most every 4 minutes it launches a detached `cswap list --json`, and cswap applies its own polling budget for `/api/oauth/usage`.
+- `(dane …)` marks cswap data older than 30 minutes.
+
 ## Requirements
 
 - [Claude Code](https://claude.com/claude-code) (logged in)
