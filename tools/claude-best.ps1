@@ -2,7 +2,7 @@
 #
 # Czyta limity wszystkich kont z claude-swap (cswap list --json), wybiera konto,
 # na ktorym najwiecej tygodniowego limitu przepadnie, jesli go szybko nie uzyc
-# (pozostaly % 7d podzielony przez godziny do resetu 7d), i odpala
+# (pozostaly % 7d razy wielkosc planu, podzielony przez godziny do resetu 7d), i odpala
 # `cswap run N` w TYM oknie terminala. Inne okna zostaja na swoich kontach.
 #
 # Pomija konta: z oknem 5h od 90%, z limitem 7d od 98%, wymagajace ponownego
@@ -35,6 +35,21 @@ $raw = & $cswap list --json 2>$null
 try { $data = ($raw -join "`n") | ConvertFrom-Json } catch { Write-Host 'cswap nie zwrocil JSON' -ForegroundColor Red; exit 3 }
 
 $now = [DateTime]::UtcNow
+
+# Plan kont (Max 20x / Max 5x / Pro) z pliku ~/.claude-konta-plany.json (jesli jest), np. z claude-konta-sync.php.
+# Wielkosc limitu wzgledem Max 5x: 20x = 4, 5x = 1, Pro = 0,2. Brak pliku = kazde konto waga 1.
+$plany = @{}
+$planyPlik = Join-Path $env:USERPROFILE '.claude-konta-plany.json'
+if (Test-Path $planyPlik) {
+    try { $pj = Get-Content $planyPlik -Raw | ConvertFrom-Json; foreach ($p in $pj.PSObject.Properties) { $plany[$p.Name.ToLower()] = $p.Value.plan } } catch {}
+}
+function Waga($plan) {
+    $p = ([string]$plan).ToLower()
+    if ($p.Contains('20x')) { return 4.0 }
+    if ($p.Contains('5x')) { return 1.0 }
+    if ($p.Contains('pro')) { return 0.2 }
+    return 1.0
+}
 function Pct($w) {
     if ($null -eq $w -or $null -eq $w.pct) { return $null }
     if ($w.resetsAt) {
@@ -67,18 +82,20 @@ foreach ($acc in $data.accounts) {
     elseif ($null -ne $h5 -and $h5 -ge 90) { $why = "okno 5h $([Math]::Round($h5))%" }
     elseif ($d7 -ge 98) { $why = "tydzien $([Math]::Round($d7))%" }
     elseif ($null -ne $model -and $model -ge 98) { $why = "limit modelu $([Math]::Round($model))%" }
-    $score = if ($why -eq '') { (100 - $d7) / $hrs } else { -1 }
-    $rows += [pscustomobject]@{ Nr = $acc.number; Konto = $acc.email; H5 = $h5; D7 = $d7; Godz = $hrs; Wynik = $score; Pominiete = $why }
+    $plan = $plany[([string]$acc.email).ToLower()]
+    $score = if ($why -eq '') { (100 - $d7) * (Waga $plan) / $hrs } else { -1 }
+    $rows += [pscustomobject]@{ Nr = $acc.number; Konto = $acc.email; Plan = $plan; H5 = $h5; D7 = $d7; Godz = $hrs; Wynik = $score; Pominiete = $why }
 }
 
 Write-Host ''
-Write-Host ' Nr  Konto                          5h     7d   reset 7d   zapas/h' -ForegroundColor DarkGray
+Write-Host ' Nr  Konto                     Plan      5h     7d   reset 7d   wynik' -ForegroundColor DarkGray
 foreach ($r in $rows) {
     $h5t = if ($null -eq $r.H5) { '  ?' } else { '{0,3}%' -f [Math]::Round($r.H5) }
     $d7t = if ($null -eq $r.D7) { '  ?' } else { '{0,3}%' -f [Math]::Round($r.D7) }
     $rt = if ($r.Godz -ge 48) { '{0,5:N1} d' -f ($r.Godz / 24) } else { '{0,5:N0} h' -f $r.Godz }
-    $sc = if ($r.Wynik -ge 0) { '{0,6:N2}%' -f $r.Wynik } else { '  ' + $r.Pominiete }
-    Write-Host (' {0,2}  {1,-28} {2,5}  {3,5}  {4,9}  {5}' -f $r.Nr, $r.Konto, $h5t, $d7t, $rt, $sc)
+    $sc = if ($r.Wynik -ge 0) { '{0,6:N2}' -f $r.Wynik } else { '  ' + $r.Pominiete }
+    $pl = if ($r.Plan) { $r.Plan } else { '?' }
+    Write-Host (' {0,2}  {1,-25} {2,-8} {3,5}  {4,5}  {5,9}  {6}' -f $r.Nr, $r.Konto, $pl, $h5t, $d7t, $rt, $sc)
 }
 
 $best = $rows | Where-Object { $_.Wynik -ge 0 } | Sort-Object Wynik -Descending | Select-Object -First 1
@@ -88,7 +105,8 @@ if (-not $best) {
     exit 4
 }
 Write-Host ''
-Write-Host ("Wybrane: konto {0} ({1}), {2:N0}% tygodnia wolne, reset za {3:N0} h." -f $best.Nr, $best.Konto, (100 - $best.D7), $best.Godz) -ForegroundColor Green
+$bp = if ($best.Plan) { ", plan " + $best.Plan } else { '' }
+Write-Host ("Wybrane: konto {0} ({1}{4}), {2:N0}% tygodnia wolne, reset za {3:N0} h." -f $best.Nr, $best.Konto, (100 - $best.D7), $best.Godz, $bp) -ForegroundColor Green
 
 if ($onlyShow) { exit 0 }
 Write-Host ("Start: cswap run {0}" -f $best.Nr) -ForegroundColor DarkGray

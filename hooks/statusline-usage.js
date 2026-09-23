@@ -195,6 +195,17 @@ const CSWAP_EXE = path.join(os.homedir(), '.local', 'bin', process.platform === 
 const CSWAP_STAMP = path.join(os.tmpdir(), 'claude-cswap-refresh.stamp');
 const CSWAP_REFRESH_S = 240; // cswap itself serves entries younger than 180 s from cache
 
+// Plan kont (Max 20x / Max 5x / Pro), plik zapisuje synchronizacja kont co 5 min.
+// Wielkosc limitu wzgledem Max 5x: 20x = 4, 5x = 1, Pro = 0,2; brak danych = 1.
+const PLANS_FILE = path.join(os.homedir(), '.claude-konta-plany.json');
+function planWeight(plan) {
+  const p = String(plan || '').toLowerCase();
+  if (p.includes('20x')) return 4;
+  if (p.includes('5x')) return 1;
+  if (p.includes('pro')) return 0.2;
+  return 1;
+}
+
 function pctClr(p) { return p >= 90 ? RED : p >= 70 ? YELLOW : GREEN; }
 
 // A window whose reset time already passed is empty, whatever the cache says.
@@ -225,6 +236,9 @@ function accountsRow(activeEmail, live, modelId) {
   const nums = (seq.sequence || []).map(String).filter(n => seq.accounts && seq.accounts[n]);
   if (nums.length < 2) return null;
 
+  let plans = {};
+  try { plans = JSON.parse(fs.readFileSync(PLANS_FILE, 'utf8')); } catch {}
+  const planOf = e => { for (const k of Object.keys(plans)) if (k.toLowerCase() === String(e).toLowerCase()) return plans[k].plan; return null; };
   const model = (modelId || '').toLowerCase();
   const now = Date.now();
   let oldest = 0;
@@ -250,23 +264,26 @@ function accountsRow(activeEmail, live, modelId) {
     const eff7 = Math.max(d7 ?? 0, scopedHits ? scoped.pct : 0);
     if (!active && c.fetchedAt) oldest = Math.max(oldest, now / 1000 - c.fetchedAt);
     if (!active && !c.fetchedAt) oldest = Infinity;
-    return { n, email, active, h5, d7, eff7, d7Reset, scoped };
+    const plan = planOf(email);
+    return { n, email, active, h5, d7, eff7, d7Reset, scoped, plan, w: planWeight(plan) };
   });
 
   // Balancing: the account whose weekly quota would otherwise go to waste soonest
-  // wins, i.e. the most headroom per hour left until its 7d reset. An account
+  // wins, i.e. the most headroom per hour left until its 7d reset, scaled by plan
+  // size (Max 20x holds 4x the quota of Max 5x). An account
   // with its 5h window nearly full is skipped (it would stall within minutes).
   let best = null;
   for (const r of rows) {
     if (r.d7 == null || (r.h5 ?? 0) >= 90 || r.eff7 >= 98) continue;
     const hrs = r.d7Reset ? Math.max(1, (new Date(r.d7Reset).getTime() - now) / 3600000) : 168;
-    const score = (100 - r.eff7) / hrs;
+    const score = (100 - r.eff7) * r.w / hrs;
     if (!best || score > best.score) best = { ...r, score };
   }
 
   const parts = rows.map(r => {
     const name = r.email.split('@')[0];
-    const tag = r.active ? `${BOLD}● ${name}${RESET}` : `${DIM}○${RESET} ${name}`;
+    const pl = r.plan && r.w < 4 ? ` ${DIM}(${r.plan.replace(/^Max\s*/i, '')})${RESET}` : '';
+    const tag = (r.active ? `${BOLD}● ${name}${RESET}` : `${DIM}○${RESET} ${name}`) + pl;
     const v5 = r.h5 == null ? `${DIM}5h ?${RESET}` : `${pctClr(r.h5)}5h ${r.h5}%${RESET}`;
     const v7 = r.d7 == null ? `${DIM}7d ?${RESET}` : `${pctClr(r.d7)}7d ${r.d7}%${RESET}`;
     const sc = r.scoped && r.scoped.pct >= 80 ? ` ${pctClr(r.scoped.pct)}${r.scoped.name} ${r.scoped.pct}%${RESET}` : '';
