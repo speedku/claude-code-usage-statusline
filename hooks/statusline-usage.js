@@ -57,6 +57,45 @@ function readEffort() {
   } catch { return null; }
 }
 
+const GIT_DIRTY_TTL = 300;       // seconds a cached dirty flag stays fresh
+const GIT_DIRTY_LOCK_MAX = 180;  // a refresh lock older than this is abandoned
+
+// Returns the last known dirty flag for `dir` (false if never checked) and,
+// when it is stale, starts one detached refresh unless another session's
+// refresh is already running. Never blocks the render.
+function cachedGitDirty(dir) {
+  const key = require('crypto').createHash('sha1').update(dir.toLowerCase()).digest('hex').slice(0, 12);
+  const cacheFile = path.join(os.tmpdir(), `claude-git-dirty-${key}.json`);
+  const lockFile = cacheFile + '.lock';
+  let cached = null;
+  try { cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch {}
+  const now = Date.now() / 1000;
+  if (cached && now - cached.ts < GIT_DIRTY_TTL) return !!cached.dirty;
+
+  try {
+    try {
+      if (now - fs.statSync(lockFile).mtimeMs / 1000 < GIT_DIRTY_LOCK_MAX) return !!(cached && cached.dirty);
+      fs.unlinkSync(lockFile);
+    } catch {}
+    fs.writeFileSync(lockFile, String(process.pid), { flag: 'wx' }); // atomic: loser of a race just skips
+    const worker = `
+      const fs = require('fs'), { execFileSync } = require('child_process');
+      const [dir, cacheFile, lockFile] = process.argv.slice(1);
+      try {
+        const out = execFileSync('git', ['--no-optional-locks', 'status', '--porcelain', '-uno'],
+          { cwd: dir, timeout: 120000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+        fs.writeFileSync(cacheFile, JSON.stringify({ ts: Date.now() / 1000, dirty: out.trim().length > 0 }));
+      } catch {
+        // Timeout or git error: remember "unknown" as clean so we do not retry every render.
+        try { fs.writeFileSync(cacheFile, JSON.stringify({ ts: Date.now() / 1000, dirty: false })); } catch {}
+      } finally { try { fs.unlinkSync(lockFile); } catch {} }`;
+    const child = spawn(process.execPath, ['-e', worker, dir, cacheFile, lockFile],
+      { detached: true, stdio: 'ignore', windowsHide: true });
+    child.unref();
+  } catch {}
+  return !!(cached && cached.dirty);
+}
+
 // Git branch (instant, read straight from .git/HEAD) plus a dirty flag.
 // Branch never blocks; the dirty check is a short, guarded git call that is
 // skipped on timeout or when git is unavailable, so the hot path stays fast.
@@ -85,18 +124,16 @@ function gitInfo(startDir) {
     const ref = head.match(/^ref:\s*refs\/heads\/(.+)$/);
     const branch = ref ? ref[1] : head.slice(0, 7); // detached HEAD -> short sha
 
-    // Dirty check: tracked files only (-uno skips the slow untracked scan),
-    // hard timeout so a huge repo can never stall the statusline render.
-    let dirty = false;
-    try {
-      const out = execSync('git status --porcelain -uno', {
-        cwd: dir, timeout: 800, encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true
-      });
-      dirty = out.trim().length > 0;
-    } catch { /* timeout / git missing: show branch without dirty marker */ }
-
-    return { branch, dirty };
+    // Dirty flag comes from a per-repo cache shared by all sessions and is
+    // refreshed in the background at most once per GIT_DIRTY_TTL. Previously
+    // every render ran `git status` synchronously with an 800 ms timeout: on
+    // kalkulator2025 (38k files) it takes ~15 s, the timeout killed only the
+    // cmd.exe wrapper, and orphaned git.exe kept scanning the tree. With ~24
+    // sessions that meant a constant pile of git processes and Defender
+    // (MsMpEng) at 40-50% CPU scanning every file they touched (2026-09-25).
+    // Skipped on network shares: over SMB it takes ~95 s.
+    if (/^(\\\\|\/\/)/.test(dir)) return { branch, dirty: false };
+    return { branch, dirty: cachedGitDirty(dir) };
   } catch { return null; }
 }
 
@@ -111,7 +148,7 @@ function lastUserPrompt(transcriptPath) {
   try {
     const stat = fs.statSync(transcriptPath);
     const TAIL = 2 * 1024 * 1024; // 2 MB is plenty to hold the latest user turn
-    if (stat.size > 8 * 1024 * 1024) {
+    if (stat.size > TAIL) {
       const fd = fs.openSync(transcriptPath, 'r');
       const buf = Buffer.alloc(TAIL);
       const n = fs.readSync(fd, buf, 0, TAIL, stat.size - TAIL);
